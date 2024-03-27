@@ -2,9 +2,12 @@ package com.hzz.netconnection.data
 
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.google.gson.GsonBuilder
+import com.hzz.netconnection.bean.AudioInfo
 import com.hzz.netconnection.net.ConnectionService
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.text.SimpleDateFormat
@@ -14,11 +17,20 @@ import java.util.Locale
 interface ConnectionRepository {
     suspend fun httpConnect()
     suspend fun toyaudio(): List<String>
+
+    suspend fun getAudiosInfo(): List<AudioInfo>
+
+    suspend fun downloadAudio(url: String): Response<ResponseBody>
 }
 
 class DefaultConnectionRepository(private val service: ConnectionService) : ConnectionRepository {
     override suspend fun httpConnect() = service.httpConnect()
     override suspend fun toyaudio(): List<String> = service.toyaudio()
+
+    override suspend fun getAudiosInfo(): List<AudioInfo> = service.getAudiosInfo()
+
+    override suspend fun downloadAudio(url: String): Response<ResponseBody> = service.downloadAudio(url = url)
+
 }
 
 class ServiceHolder {
