@@ -210,7 +210,7 @@ class MainActivity : ComponentActivity() {
                                                 modifier = Modifier
                                                     .clickable {
                                                         mainViewModel.downloadAudio(
-                                                            audioInfo,
+                                                            audioInfo.link.linkToPath(),
                                                             fileName,
                                                             this@MainActivity
                                                         )
@@ -272,7 +272,7 @@ class MainActivity : ComponentActivity() {
                             DownloadAlertDialog(
                                 onDismissRequest = { showDialog = false },
                                 onConfirmation = {
-                                    mainViewModel.downloadAllAudio(this@MainActivity)
+                                    mainViewModel.autoSync(this@MainActivity)
                                     showDialog = false
                                 },
                                 dialogTitle = "Warning",

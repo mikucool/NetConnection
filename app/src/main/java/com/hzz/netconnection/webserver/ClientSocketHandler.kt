@@ -79,7 +79,7 @@ class ClientSocketHandler(private val clientSocket: Socket, private val context:
         val responseWithoutBody = DefaultBuilder(code = 200, description = "OK")
             .addHeader("Content-Type: audio/mpeg, charset=utf-8")
             .addHeader("Content-Length: ${randomAccessFile.length()}")
-            .addHeader("Content-Disposition: attachment; filename=\"blank\"")
+            .addHeader("Content-Disposition: attachment; filename=\"$availablePath\"")
             .build()
         val bytes = responseWithoutBody.toByteArray(Charsets.UTF_8)
         // response header

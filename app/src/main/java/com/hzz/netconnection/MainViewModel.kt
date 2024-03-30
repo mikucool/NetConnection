@@ -5,22 +5,25 @@ import android.net.wifi.WifiManager
 import android.os.Environment
 import android.text.format.Formatter
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hzz.netconnection.bean.AudioInfo
 import com.hzz.netconnection.data.ConnectionRepository
 import com.hzz.netconnection.data.ServiceHolder
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
-import java.io.RandomAccessFile
-import java.nio.channels.Channels
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.concurrent.thread
 
 class MainViewModel : ViewModel() {
 
@@ -38,6 +41,7 @@ class MainViewModel : ViewModel() {
     private val _isUrlPrepared = MutableStateFlow(false)
     val isUrlPrepared = _isUrlPrepared.asStateFlow()
     private var baseUrl = ""
+    private var autoSync = true
     fun getIpInfo(context: Context): String {
         val wifiManager: WifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
         return Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
@@ -54,7 +58,7 @@ class MainViewModel : ViewModel() {
     fun updateUrlState(isPrepared: Boolean) {
         baseUrl = if (isHttps.value) "https://${url.value}" else "http://${url.value}"
         _isUrlPrepared.value = isPrepared
-        updateLogList("${formatter.format(Date())} 🙃🙃 Remote Server Address: $baseUrl \n")
+        logList.addWithCheckSize("${formatter.format(Date())} 🙃🙃 Remote Server Address: $baseUrl \n")
     }
 
     fun updateSchema(https: Boolean) {
@@ -63,15 +67,15 @@ class MainViewModel : ViewModel() {
 
     fun ping() {
         val runtime = Runtime.getRuntime()
-        updateLogList("${formatter.format(Date())} 😘😘ping -c 1 ${pingIp.value}\n")
+        logList.addWithCheckSize("${formatter.format(Date())} 😘😘ping -c 1 ${pingIp.value}\n")
         val exec = runtime.exec("/system/bin/ping -c 1 ${pingIp.value}")
 
         Thread {
             val res = exec.waitFor()
             if (res == 0) {
-                updateLogList("${formatter.format(Date())} 🥰🥰successfully.\n")
+                logList.addWithCheckSize("${formatter.format(Date())} 🥰🥰successfully.\n")
             } else {
-                updateLogList("${formatter.format(Date())} 😫😫failed.\n")
+                logList.addWithCheckSize("${formatter.format(Date())} 😫😫failed.\n")
             }
             exec.outputStream.close()
             exec.inputStream.close()
@@ -94,21 +98,14 @@ class MainViewModel : ViewModel() {
                     }
                 }
             } catch (e: Exception) {
-                logList.add("${formatter.format(Date())} 😭😭${e.message}\n")
+                logList.addWithCheckSize("${formatter.format(Date())} 😭😭${e.message}\n")
                 e.printStackTrace()
             }
         }
     }
 
-    fun downloadFile(fileName: String, downloader: Downloader) {
-        val urlFileName = fileName.replace(" ", "+")
-        val downloadFileUrl = url.value + "/downloadFile?fileName=$urlFileName"
-        logList.add("${formatter.format(Date())} 🥵🥵 download from $downloadFileUrl\n")
-        downloader.downloadFile(downloadFileUrl, fileName)
-    }
-
     fun downloadAudio(
-        audioInfo: AudioInfo,
+        path: String,
         fileName: String,
         context: Context
     ) {
@@ -117,37 +114,52 @@ class MainViewModel : ViewModel() {
                 repository = serviceHolder.obtainRepository(baseUrl, logList)
             }
         } else return
-        logList.add("${formatter.format(Date())} 🥵🥵 download from ${audioInfo.link}\n")
+        logList.addWithCheckSize("${formatter.format(Date())} 🥵🥵 download $fileName\n")
         viewModelScope.launch {
             try {
-                val response = repository?.downloadAudio(audioInfo.link.getAudioPath())
+                val response = repository?.downloadAudio(path)
                 val responseBody = response?.body()
-                val contentSize = response?.raw()?.header("Content-Length")
-                if (response != null && responseBody != null && contentSize != null) {
-                    launch {
+                logList.addWithCheckSize("${formatter.format(Date())} 😍😍 $fileName downloaded finished\n")
+                if (response != null && responseBody != null) {
+                    launch(Dispatchers.IO) {
                         saveToLocal(
                             fileName = fileName,
                             source = responseBody.byteStream(),
-                            size = contentSize.toLong(),
                             context = context
                         )
                     }
                 }
             } catch (e: Exception) {
-                logList.add("${formatter.format(Date())} 😭😭${e.message}\n")
+                logList.addWithCheckSize("${formatter.format(Date())} 😭😭${e.message}\n")
                 e.printStackTrace()
             }
         }
     }
 
-    fun downloadAllAudio(context: Context) {
+    fun switchAutoSyncMode() {
+        autoSync = !autoSync
+    }
+
+    fun autoSync(context: Context) {
+        thread(true) {
+            runBlocking {
+                var i = 0
+                while (autoSync) {
+                    repository?.getAudiosInfo()
+                    downloadAllAudio(context)
+                    delay(3000)
+                }
+            }
+        }
+    }
+
+    private fun downloadAllAudio(context: Context) {
         // filter existed audio
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
         val fileNameList = dir?.list { _, fileName ->
             fileName.endsWith(".mp3")
         }
-
-        val downloadableAudios = audioInfoList.filter { audioInfo ->
+        val availableAudios = audioInfoList.filter { audioInfo ->
             val fileName = audioInfo.link.linkToFileName()
             if (fileNameList != null) {
                 !fileNameList.contains(fileName)
@@ -155,91 +167,54 @@ class MainViewModel : ViewModel() {
                 true
             }
         }
-        println("downloadableAudios:" + downloadableAudios.size)
+        logList.addWithCheckSize("${formatter.format(Date())} 😪😪 update audio count:${availableAudios.size}\n")
 
-        if (isUrlPrepared.value && downloadableAudios.isNotEmpty()) {
-            if (repository == null) {
-                repository = serviceHolder.obtainRepository(baseUrl, logList)
-            }
+        if (isUrlPrepared.value && availableAudios.isNotEmpty() && repository == null) {
+            repository = serviceHolder.obtainRepository(baseUrl, logList)
         } else return
-        downloadableAudios.forEach { audioInfo ->
-            val fileName = audioInfo.link.linkToFileName()
-            downloadAudio(audioInfo, fileName, context)
-        }
+        availableAudios
+            .map { audioInfo -> audioInfo.link }
+            .distinct()
+            .forEach { link ->
+                val fileName = link.linkToFileName()
+                val path = link.linkToPath()
+                downloadAudio(path, fileName, context)
+            }
     }
 
     private suspend fun saveToLocal(
         fileName: String,
         source: InputStream,
-        size: Long,
         context: Context
     ) {
         delay(100)
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
         val file = File(dir, fileName)
-        logList.add("${formatter.format(Date())} 😍😍 download successfully\n")
-        logList.add("${formatter.format(Date())} 🥺🥺 save to $dir\n")
+        logList.addWithCheckSize("${formatter.format(Date())} 🥺🥺 save to $dir\n")
         try {
-            val randomAccessFile = RandomAccessFile(file, "rw")
-            val randomAccessFileChannel = randomAccessFile.channel
-            val sourceChannel = Channels.newChannel(source)
-            var currentPosition = 0L
-            var remainSize = size
-            while (remainSize > 0) {
-                val transferCount = randomAccessFileChannel.transferFrom(
-                    sourceChannel,
-                    currentPosition,
-                    remainSize
-                )
-                if (transferCount > 0) {
-                    remainSize -= transferCount
-                    currentPosition += transferCount
-                }
+            val buffer = ByteArray(4096)
+            val outputStream = FileOutputStream(file)
+            while (true) {
+                val count = source.read(buffer)
+                if (count == -1) break
+                outputStream.write(buffer, 0, count)
             }
-            randomAccessFileChannel.close()
-            randomAccessFile.close()
-            sourceChannel.close()
-            logList.add("${formatter.format(Date())} 🥴🥴 $fileName saved successfully\n")
+            outputStream.close()
+            source.close()
+            logList.addWithCheckSize("${formatter.format(Date())} 🥴🥴 $fileName saved successfully\n")
         } catch (e: Exception) {
             e.printStackTrace()
-            logList.add("${formatter.format(Date())} 😱😱 ${e.message}\n")
+            logList.addWithCheckSize("${formatter.format(Date())} 😱😱 ${e.message}\n")
         }
 
     }
-
-    /**
-     * example
-     * receiver is "http://host:port/xxx/xx.mp3"
-     * return "xxx/xx.mp3"
-     */
-    private fun String.getAudioPath(): String {
-        // replace the space in the url
-        val availableUrl = this.replace(" ", "+")
-        val split = availableUrl.split("/")
-        var res = ""
-        if (split.size > 3) {
-            val sub = split.subList(3, split.size)
-            val resBuilder = StringBuilder()
-            for ((index, s) in sub.withIndex()) {
-                if (index != sub.size - 1) resBuilder.append("$s/")
-                else resBuilder.append(s)
-            }
-            res = resBuilder.toString()
-        }
-        return res
-    }
-
 
     fun reset() {
-        updateLogList("${formatter.format(Date())} 🤪🤪-----Reset-----🤪🤪\n")
+        logList.addWithCheckSize("${formatter.format(Date())} 🤪🤪-----Reset-----🤪🤪\n")
         updateUrl("")
         audioInfoList.clear()
         _isUrlPrepared.value = false
         repository = null
-    }
-
-    private fun updateLogList(log: String) {
-        logList.add(log)
     }
 
     fun clearLog() {
@@ -248,7 +223,34 @@ class MainViewModel : ViewModel() {
 
 }
 
+/**
+ * example
+ * receiver: "http://host:port/xxx/xx.mp3"
+ * return: "xxx/xx.mp3"
+ */
+fun String.linkToPath(): String {
+    // replace the space in the url
+    val availableUrl = this.replace(" ", "+")
+    val split = availableUrl.split("/")
+    var res = ""
+    if (split.size > 3) {
+        val sub = split.subList(3, split.size)
+        val resBuilder = StringBuilder()
+        for ((index, s) in sub.withIndex()) {
+            if (index != sub.size - 1) resBuilder.append("$s/")
+            else resBuilder.append(s)
+        }
+        res = resBuilder.toString()
+    }
+    return res
+}
+
 fun String.linkToFileName(): String {
     val split = this.split("/")
     return split.last()
+}
+
+fun SnapshotStateList<String>.addWithCheckSize(text: String) {
+    if (this.size > 256) this.clear()
+    this.add(text)
 }
