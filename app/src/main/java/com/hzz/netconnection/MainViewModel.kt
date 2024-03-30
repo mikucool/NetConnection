@@ -143,7 +143,6 @@ class MainViewModel : ViewModel() {
     fun autoSync(context: Context) {
         thread(true) {
             runBlocking {
-                var i = 0
                 while (autoSync) {
                     repository?.getAudiosInfo()
                     downloadAllAudio(context)
@@ -168,18 +167,18 @@ class MainViewModel : ViewModel() {
             }
         }
         logList.addWithCheckSize("${formatter.format(Date())} 😪😪 update audio count:${availableAudios.size}\n")
-
-        if (isUrlPrepared.value && availableAudios.isNotEmpty() && repository == null) {
+        if (!isUrlPrepared.value || availableAudios.isEmpty()) return
+        if (repository == null) {
             repository = serviceHolder.obtainRepository(baseUrl, logList)
-        } else return
-        availableAudios
+        }
+        val linkList = availableAudios
             .map { audioInfo -> audioInfo.link }
             .distinct()
-            .forEach { link ->
-                val fileName = link.linkToFileName()
-                val path = link.linkToPath()
-                downloadAudio(path, fileName, context)
-            }
+        linkList.forEach { link ->
+            val fileName = link.linkToFileName()
+            val path = link.linkToPath()
+            downloadAudio(path, fileName, context)
+        }
     }
 
     private suspend fun saveToLocal(
@@ -215,6 +214,7 @@ class MainViewModel : ViewModel() {
         audioInfoList.clear()
         _isUrlPrepared.value = false
         repository = null
+        autoSync = false
     }
 
     fun clearLog() {
