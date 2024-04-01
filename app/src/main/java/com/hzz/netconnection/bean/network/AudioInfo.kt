@@ -1,4 +1,4 @@
-package com.hzz.netconnection.bean
+package com.hzz.netconnection.bean.network
 
 import com.google.gson.annotations.SerializedName
 import java.util.Date

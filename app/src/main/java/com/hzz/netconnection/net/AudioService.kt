@@ -1,13 +1,13 @@
 package com.hzz.netconnection.net
 
-import com.hzz.netconnection.bean.AudioInfo
+import com.hzz.netconnection.bean.network.AudioInfo
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Query
 import retrofit2.http.Url
 
-interface ConnectionService {
+interface AudioService {
     @GET("/")
     suspend fun httpConnect()
 

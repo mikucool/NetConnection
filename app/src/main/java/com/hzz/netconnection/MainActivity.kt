@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hzz.netconnection.MainViewModel.Companion.Factory
 import com.hzz.netconnection.ui.theme.NetConnectionTheme
 import com.hzz.netconnection.webserver.FileServer
 import kotlinx.coroutines.launch
@@ -67,7 +68,7 @@ class MainActivity : ComponentActivity() {
             requestPermissions(permissions.toTypedArray(), 0)
             NetConnectionTheme {
                 val lazyColumnState = rememberLazyListState()
-                val mainViewModel: MainViewModel = viewModel()
+                val mainViewModel: MainViewModel = viewModel(factory = Factory)
                 val pingIp = mainViewModel.pingIp.collectAsState()
                 val url = mainViewModel.url.collectAsState()
                 val logs = mainViewModel.logList
@@ -210,8 +211,7 @@ class MainActivity : ComponentActivity() {
                                                 modifier = Modifier
                                                     .clickable {
                                                         mainViewModel.downloadAudio(
-                                                            audioInfo.link.linkToPath(),
-                                                            fileName,
+                                                            audioInfo,
                                                             this@MainActivity
                                                         )
                                                     }

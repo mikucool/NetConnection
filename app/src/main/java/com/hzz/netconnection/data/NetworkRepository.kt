@@ -2,8 +2,8 @@ package com.hzz.netconnection.data
 
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.google.gson.GsonBuilder
-import com.hzz.netconnection.bean.AudioInfo
-import com.hzz.netconnection.net.ConnectionService
+import com.hzz.netconnection.bean.network.AudioInfo
+import com.hzz.netconnection.net.AudioService
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
@@ -14,7 +14,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-interface ConnectionRepository {
+interface NetworkRepository {
     suspend fun httpConnect()
     suspend fun toyaudio(): List<String>
 
@@ -23,7 +23,7 @@ interface ConnectionRepository {
     suspend fun downloadAudio(url: String): Response<ResponseBody>
 }
 
-class DefaultConnectionRepository(private val service: ConnectionService) : ConnectionRepository {
+class DefaultNetworkRepository(private val service: AudioService) : NetworkRepository {
     override suspend fun httpConnect() = service.httpConnect()
     override suspend fun toyaudio(): List<String> = service.toyaudio()
 
@@ -42,7 +42,7 @@ class ServiceHolder {
     fun obtainRepository(
         baseUrl: String,
         logList: SnapshotStateList<String>
-    ): ConnectionRepository {
+    ): NetworkRepository {
         // okHttpClient
         val okHttpClient: OkHttpClient = OkHttpClient.Builder()
             .addInterceptor(loggingInterceptor)
@@ -77,7 +77,7 @@ class ServiceHolder {
             .client(okHttpClient)
             .build()
         // service
-        val service = retrofit.create(ConnectionService::class.java)
-        return DefaultConnectionRepository(service)
+        val service = retrofit.create(AudioService::class.java)
+        return DefaultNetworkRepository(service)
     }
 }

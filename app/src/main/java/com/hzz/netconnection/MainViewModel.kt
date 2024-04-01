@@ -7,11 +7,18 @@ import android.text.format.Formatter
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewModelScope
-import com.hzz.netconnection.bean.AudioInfo
-import com.hzz.netconnection.data.ConnectionRepository
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.hzz.netconnection.bean.local.FileInfo
+import com.hzz.netconnection.bean.network.AudioInfo
+import com.hzz.netconnection.data.NetworkRepository
+import com.hzz.netconnection.data.LocalRepository
 import com.hzz.netconnection.data.ServiceHolder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,7 +32,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.concurrent.thread
 
-class MainViewModel : ViewModel() {
+class MainViewModel(val localRepository: LocalRepository) : ViewModel() {
 
     private val _pingIp = MutableStateFlow("")
     val pingIp = _pingIp.asStateFlow()
@@ -34,14 +41,17 @@ class MainViewModel : ViewModel() {
     private val _isHttps = MutableStateFlow(false)
     val isHttps = _isHttps.asStateFlow()
     val logList = mutableStateListOf<String>()
-    val audioInfoList = mutableStateListOf<AudioInfo>()
+    var audioInfoList = mutableStateListOf<AudioInfo>()
     private val formatter = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
     private val serviceHolder = ServiceHolder()
-    private var repository: ConnectionRepository? = null
+    private var networkRepository: NetworkRepository? = null
     private val _isUrlPrepared = MutableStateFlow(false)
     val isUrlPrepared = _isUrlPrepared.asStateFlow()
     private var baseUrl = ""
     private var autoSync = true
+    private val tempMd5List = mutableListOf<String>()
+    private val saveJobs = mutableListOf<Job>()
+    private var isOnAutoSync = false
     fun getIpInfo(context: Context): String {
         val wifiManager: WifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
         return Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
@@ -58,7 +68,7 @@ class MainViewModel : ViewModel() {
     fun updateUrlState(isPrepared: Boolean) {
         baseUrl = if (isHttps.value) "https://${url.value}" else "http://${url.value}"
         _isUrlPrepared.value = isPrepared
-        logList.addWithCheckSize("${formatter.format(Date())} 🙃🙃 Remote Server Address: $baseUrl \n")
+        logList.addWithSizeCheck("${formatter.format(Date())} 🙃🙃 Remote Server Address: $baseUrl \n")
     }
 
     fun updateSchema(https: Boolean) {
@@ -67,15 +77,15 @@ class MainViewModel : ViewModel() {
 
     fun ping() {
         val runtime = Runtime.getRuntime()
-        logList.addWithCheckSize("${formatter.format(Date())} 😘😘ping -c 1 ${pingIp.value}\n")
+        logList.addWithSizeCheck("${formatter.format(Date())} 😘😘ping -c 1 ${pingIp.value}\n")
         val exec = runtime.exec("/system/bin/ping -c 1 ${pingIp.value}")
 
         Thread {
             val res = exec.waitFor()
             if (res == 0) {
-                logList.addWithCheckSize("${formatter.format(Date())} 🥰🥰successfully.\n")
+                logList.addWithSizeCheck("${formatter.format(Date())} 🥰🥰successfully.\n")
             } else {
-                logList.addWithCheckSize("${formatter.format(Date())} 😫😫failed.\n")
+                logList.addWithSizeCheck("${formatter.format(Date())} 😫😫failed.\n")
             }
             exec.outputStream.close()
             exec.inputStream.close()
@@ -88,49 +98,48 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 if (isUrlPrepared.value) {
-                    if (repository == null) {
-                        repository = serviceHolder.obtainRepository(baseUrl, logList)
+                    if (networkRepository == null) {
+                        networkRepository = serviceHolder.obtainRepository(baseUrl, logList)
                     }
-                    val res = repository?.getAudiosInfo()
+                    val res = networkRepository?.getAudiosInfo()
                     if (res != null) {
                         audioInfoList.clear()
                         audioInfoList.addAll(res)
                     }
                 }
             } catch (e: Exception) {
-                logList.addWithCheckSize("${formatter.format(Date())} 😭😭${e.message}\n")
+                logList.addWithSizeCheck("${formatter.format(Date())} 😭😭${e.message}\n")
                 e.printStackTrace()
             }
         }
     }
 
     fun downloadAudio(
-        path: String,
-        fileName: String,
+        audioInfo: AudioInfo,
         context: Context
     ) {
         if (isUrlPrepared.value) {
-            if (repository == null) {
-                repository = serviceHolder.obtainRepository(baseUrl, logList)
+            if (networkRepository == null) {
+                networkRepository = serviceHolder.obtainRepository(baseUrl, logList)
             }
         } else return
-        logList.addWithCheckSize("${formatter.format(Date())} 🥵🥵 download $fileName\n")
         viewModelScope.launch {
             try {
-                val response = repository?.downloadAudio(path)
+                val response = networkRepository?.downloadAudio(audioInfo.link.linkToPath())
                 val responseBody = response?.body()
-                logList.addWithCheckSize("${formatter.format(Date())} 😍😍 $fileName downloaded finished\n")
+                logList.addWithSizeCheck("${formatter.format(Date())} 😍😍 ${audioInfo.link.linkToFileName()} download......\n")
                 if (response != null && responseBody != null) {
-                    launch(Dispatchers.IO) {
+                    val job = launch(Dispatchers.IO) {
                         saveToLocal(
-                            fileName = fileName,
+                            audioInfo = audioInfo,
                             source = responseBody.byteStream(),
                             context = context
                         )
                     }
+                    saveJobs.add(job)
                 }
             } catch (e: Exception) {
-                logList.addWithCheckSize("${formatter.format(Date())} 😭😭${e.message}\n")
+                logList.addWithSizeCheck("${formatter.format(Date())} 😭😭${e.message}\n")
                 e.printStackTrace()
             }
         }
@@ -141,55 +150,68 @@ class MainViewModel : ViewModel() {
     }
 
     fun autoSync(context: Context) {
+        if (isOnAutoSync) return
         thread(true) {
+            isOnAutoSync = true
             runBlocking {
                 while (autoSync) {
-                    repository?.getAudiosInfo()
-                    downloadAllAudio(context)
                     delay(3000)
+                    val newerAudioInfoList = networkRepository?.getAudiosInfo()
+                    if (!newerAudioInfoList.isNullOrEmpty()) {
+                        if (audioInfoList.size != newerAudioInfoList.size){
+                            updateAudioInfoList(newerAudioInfoList)
+                            downloadAllAudio(context)
+                        } else if (audioInfoList.toList().containsAll(newerAudioInfoList)) {
+                            continue
+                        } else {
+                            updateAudioInfoList(newerAudioInfoList)
+                            downloadAllAudio(context)
+                        }
+                    }
                 }
             }
         }
     }
 
+    private fun updateAudioInfoList(list: List<AudioInfo>) {
+        audioInfoList.clear()
+        audioInfoList.addAll(list)
+    }
+
     private fun downloadAllAudio(context: Context) {
-        // filter existed audio
-        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-        val fileNameList = dir?.list { _, fileName ->
-            fileName.endsWith(".mp3")
-        }
-        val availableAudios = audioInfoList.filter { audioInfo ->
-            val fileName = audioInfo.link.linkToFileName()
-            if (fileNameList != null) {
-                !fileNameList.contains(fileName)
-            } else {
-                true
+        val fileMd5List = localRepository.getAllFileInfo().map { fileInfo -> fileInfo.md5 }
+        // filter audio
+        val availableAudios = audioInfoList
+            .distinctBy { audioInfo -> audioInfo.link }
+            .filter { audioInfo ->
+                val audioMd5 = audioInfo.md5
+                // if md5 existed in file_info table, indicate the audio is already downloaded
+                // if md5 existed in tempMd5List, indicate the audio being processed
+                if (fileMd5List.contains(audioMd5) || tempMd5List.contains(audioMd5)) {
+                    false
+                } else {
+                    tempMd5List.add(audioMd5)
+                    true
+                }
             }
-        }
-        logList.addWithCheckSize("${formatter.format(Date())} 😪😪 update audio count:${availableAudios.size}\n")
+        logList.addWithSizeCheck("${formatter.format(Date())} 😪😪 update audio count:${availableAudios.size}\n")
         if (!isUrlPrepared.value || availableAudios.isEmpty()) return
-        if (repository == null) {
-            repository = serviceHolder.obtainRepository(baseUrl, logList)
+        if (networkRepository == null) {
+            networkRepository = serviceHolder.obtainRepository(baseUrl, logList)
         }
-        val linkList = availableAudios
-            .map { audioInfo -> audioInfo.link }
-            .distinct()
-        linkList.forEach { link ->
-            val fileName = link.linkToFileName()
-            val path = link.linkToPath()
-            downloadAudio(path, fileName, context)
+
+        availableAudios.forEach { audioInfo ->
+            downloadAudio(audioInfo, context)
         }
     }
 
     private suspend fun saveToLocal(
-        fileName: String,
+        audioInfo: AudioInfo,
         source: InputStream,
         context: Context
     ) {
-        delay(100)
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-        val file = File(dir, fileName)
-        logList.addWithCheckSize("${formatter.format(Date())} 🥺🥺 save to $dir\n")
+        val file = File(dir, audioInfo.link.linkToFileName())
         try {
             val buffer = ByteArray(4096)
             val outputStream = FileOutputStream(file)
@@ -200,20 +222,29 @@ class MainViewModel : ViewModel() {
             }
             outputStream.close()
             source.close()
-            logList.addWithCheckSize("${formatter.format(Date())} 🥴🥴 $fileName saved successfully\n")
+            logList.addWithSizeCheck("${formatter.format(Date())} 🥵🥵 ${audioInfo.link.linkToFileName()} download finished\n")
+            logList.addWithSizeCheck("${formatter.format(Date())} 🥴🥴 save to $dir\n")
+            localRepository.insertFileInfo(audioInfo.audioInfoToFileInfo())
         } catch (e: Exception) {
             e.printStackTrace()
-            logList.addWithCheckSize("${formatter.format(Date())} 😱😱 ${e.message}\n")
+            tempMd5List.remove(audioInfo.md5)
+            logList.addWithSizeCheck("${formatter.format(Date())} 😱😱 ${e.message}\n")
         }
 
     }
 
     fun reset() {
-        logList.addWithCheckSize("${formatter.format(Date())} 🤪🤪-----Reset-----🤪🤪\n")
+        logList.addWithSizeCheck("${formatter.format(Date())} 🤪🤪-----Reset-----🤪🤪\n")
+        isOnAutoSync = false
+        saveJobs.forEach { job ->
+            if (job.isActive) job.cancel()
+        }
+        saveJobs.clear()
+        tempMd5List.clear()
         updateUrl("")
         audioInfoList.clear()
         _isUrlPrepared.value = false
-        repository = null
+        networkRepository = null
         autoSync = false
     }
 
@@ -221,6 +252,19 @@ class MainViewModel : ViewModel() {
         logList.clear()
     }
 
+    companion object {
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val application = (this[APPLICATION_KEY] as NetConnectionApplication)
+                MainViewModel(application.localRepository)
+            }
+        }
+    }
+
+}
+
+fun AudioInfo.audioInfoToFileInfo(): FileInfo {
+    return FileInfo(id = 0, name = this.link.linkToFileName(), md5 = this.md5)
 }
 
 /**
@@ -229,7 +273,7 @@ class MainViewModel : ViewModel() {
  * return: "xxx/xx.mp3"
  */
 fun String.linkToPath(): String {
-    // replace the space in the url
+    // replace the space of the url passed
     val availableUrl = this.replace(" ", "+")
     val split = availableUrl.split("/")
     var res = ""
@@ -250,7 +294,8 @@ fun String.linkToFileName(): String {
     return split.last()
 }
 
-fun SnapshotStateList<String>.addWithCheckSize(text: String) {
-    if (this.size > 256) this.clear()
+const val LOG_SIZE = 256
+fun SnapshotStateList<String>.addWithSizeCheck(text: String) {
+    if (this.size > LOG_SIZE) this.clear()
     this.add(text)
 }
