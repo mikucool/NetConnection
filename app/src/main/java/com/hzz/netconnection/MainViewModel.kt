@@ -32,7 +32,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.concurrent.thread
 
-class MainViewModel(val localRepository: LocalRepository) : ViewModel() {
+class MainViewModel(private val localRepository: LocalRepository) : ViewModel() {
 
     private val _pingIp = MutableStateFlow("")
     val pingIp = _pingIp.asStateFlow()
@@ -48,10 +48,10 @@ class MainViewModel(val localRepository: LocalRepository) : ViewModel() {
     private val _isUrlPrepared = MutableStateFlow(false)
     val isUrlPrepared = _isUrlPrepared.asStateFlow()
     private var baseUrl = ""
-    private var autoSync = true
+    private val _autoSync = MutableStateFlow(false)
+    val autoSync = _autoSync.asStateFlow()
     private val tempMd5List = mutableListOf<String>()
     private val saveJobs = mutableListOf<Job>()
-    private var isOnAutoSync = false
     fun getIpInfo(context: Context): String {
         val wifiManager: WifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
         return Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
@@ -145,20 +145,24 @@ class MainViewModel(val localRepository: LocalRepository) : ViewModel() {
         }
     }
 
-    fun switchAutoSyncMode() {
-        autoSync = !autoSync
+    fun turnOffAutoSyncMode() {
+        _autoSync.value = false
     }
 
-    fun autoSync(context: Context) {
-        if (isOnAutoSync) return
+    fun turnOnAutoSyncMode(context: Context) {
+        autoSync(context)
+    }
+
+    private fun autoSync(context: Context) {
+        if (autoSync.value) return
         thread(true) {
-            isOnAutoSync = true
+            _autoSync.value = true
             runBlocking {
-                while (autoSync) {
-                    delay(3000)
+                while (autoSync.value) {
+                    delay(SYNC_INTERVAL_TIME)
                     val newerAudioInfoList = networkRepository?.getAudiosInfo()
                     if (!newerAudioInfoList.isNullOrEmpty()) {
-                        if (audioInfoList.size != newerAudioInfoList.size){
+                        if (audioInfoList.size != newerAudioInfoList.size) {
                             updateAudioInfoList(newerAudioInfoList)
                             downloadAllAudio(context)
                         } else if (audioInfoList.toList().containsAll(newerAudioInfoList)) {
@@ -235,7 +239,6 @@ class MainViewModel(val localRepository: LocalRepository) : ViewModel() {
 
     fun reset() {
         logList.addWithSizeCheck("${formatter.format(Date())} 🤪🤪-----Reset-----🤪🤪\n")
-        isOnAutoSync = false
         saveJobs.forEach { job ->
             if (job.isActive) job.cancel()
         }
@@ -245,7 +248,7 @@ class MainViewModel(val localRepository: LocalRepository) : ViewModel() {
         audioInfoList.clear()
         _isUrlPrepared.value = false
         networkRepository = null
-        autoSync = false
+        _autoSync.value = false
     }
 
     fun clearLog() {
@@ -253,6 +256,7 @@ class MainViewModel(val localRepository: LocalRepository) : ViewModel() {
     }
 
     companion object {
+        const val SYNC_INTERVAL_TIME = 3_000L
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val application = (this[APPLICATION_KEY] as NetConnectionApplication)

@@ -5,6 +5,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -36,11 +41,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,7 +81,19 @@ class MainActivity : ComponentActivity() {
                 val isUrlPrepared = mainViewModel.isUrlPrepared.collectAsState()
                 val isHttps = mainViewModel.isHttps.collectAsState()
                 val wifiIpAddress = mainViewModel.getIpInfo(this@MainActivity)
+                val isAutoSync = mainViewModel.autoSync.collectAsState()
                 var showDialog by remember { mutableStateOf(false) }
+                val rotation = rememberInfiniteTransition(label = "rotation")
+                val spin by rotation.animateFloat(
+                    initialValue = 360f,
+                    targetValue = 0f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(
+                            durationMillis = 1500,
+                        ),
+                        repeatMode = RepeatMode.Restart
+                    ), label = "rotation"
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -84,7 +101,6 @@ class MainActivity : ComponentActivity() {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     val pagerState = rememberPagerState { 2 }
-                    val coroutineScope = rememberCoroutineScope()
                     // local net information
                     TextField(
                         value = "Local Server initialized with\n " +
@@ -155,7 +171,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Spacer(modifier = Modifier.size(16.dp))
-
 
                     LaunchedEffect(key1 = logs.size) {
                         launch {
@@ -241,27 +256,15 @@ class MainActivity : ComponentActivity() {
                                 }
                             } else {
                                 Button(
-                                    modifier = Modifier.padding(horizontal = 16.dp),
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            pagerState.animateScrollToPage(1)
-                                        }
-                                        mainViewModel.getAudiosInfo()
-                                    },
-                                    enabled = isUrlPrepared.value
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.baseline_sync_24),
-                                        contentDescription = "refresh"
-                                    )
-                                }
-                                Button(
                                     onClick = { showDialog = true },
                                     enabled = isUrlPrepared.value
                                 ) {
                                     Icon(
-                                        painter = painterResource(id = R.drawable.baseline_checklist_24),
-                                        contentDescription = "download all audio"
+                                        painter = painterResource(id = R.drawable.baseline_sync_24),
+                                        contentDescription = "download all audio",
+                                        modifier = Modifier.graphicsLayer {
+                                            if (isAutoSync.value) rotationZ = spin
+                                        }
                                     )
                                 }
                             }
@@ -269,17 +272,30 @@ class MainActivity : ComponentActivity() {
                         }
 
                         if (showDialog) {
-                            DownloadAlertDialog(
-                                onDismissRequest = { showDialog = false },
-                                onConfirmation = {
-                                    mainViewModel.autoSync(this@MainActivity)
-                                    showDialog = false
-                                },
-                                dialogTitle = "Warning",
-                                dialogText = "Download all of the audios, be sure your phone have enough storage." +
-                                        " Check logging page for download location",
-                                icon = Icons.Default.Warning
-                            )
+                            if (isAutoSync.value) {
+                                DownloadAlertDialog(
+                                    onDismissRequest = { showDialog = false },
+                                    onConfirmation = {
+                                        mainViewModel.turnOffAutoSyncMode()
+                                        showDialog = false
+                                    },
+                                    dialogTitle = "Warning",
+                                    dialogText = "Turn off Auto Sync Mode",
+                                    icon = Icons.Default.Warning
+                                )
+                            } else {
+                                DownloadAlertDialog(
+                                    onDismissRequest = { showDialog = false },
+                                    onConfirmation = {
+                                        mainViewModel.turnOnAutoSyncMode(this@MainActivity)
+                                        showDialog = false
+                                    },
+                                    dialogTitle = "Warning",
+                                    dialogText = "Turn on Auto Sync Mode to synchronize " +
+                                            "audio data from server automatically",
+                                    icon = Icons.Default.Warning
+                                )
+                            }
                         }
                     }
                 }
